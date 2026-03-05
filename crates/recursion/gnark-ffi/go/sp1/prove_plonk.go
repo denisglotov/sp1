@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/consensys/gnark-crypto/ecc"
@@ -14,15 +13,6 @@ import (
 	"github.com/consensys/gnark/constraint"
 	"github.com/consensys/gnark/frontend"
 )
-
-// logStderr writes directly to fd 2 via raw syscall, bypassing all Go
-// buffering. This is needed because fmt.Printf, fmt.Fprintf(os.Stderr, ...),
-// and log.Printf are all invisible when Go is compiled as a c-archive and
-// linked into a Rust binary running in Docker.
-func logStderr(format string, args ...interface{}) {
-	msg := fmt.Sprintf(format, args...)
-	syscall.Write(2, []byte(msg))
-}
 
 var globalPlonkMutex sync.RWMutex
 var globalPlonkScs constraint.ConstraintSystem = plonk.NewCS(ecc.BN254)
@@ -38,12 +28,11 @@ func ProvePlonk(dataDir string, witnessPath string) Proof {
 		panic("dataDirStr is required")
 	}
 
-	logStderr("plonk: ProvePlonk called, dataDir=%s\n", dataDir)
 	start := time.Now()
 	os.Setenv("CONSTRAINTS_JSON", dataDir+"/"+constraintsJsonFile)
-	logStderr("plonk: Setting environment variables took %s\n", time.Since(start))
+	fmt.Printf("Setting environment variables took %s\n", time.Since(start))
 
-	// Read the R1CS (cached globally after first call).
+	// Read the R1CS.
 	globalPlonkMutex.Lock()
 	if !globalPlonkScsInitialized {
 		start = time.Now()
@@ -55,13 +44,11 @@ func ProvePlonk(dataDir string, witnessPath string) Proof {
 		globalPlonkScs.ReadFrom(scsReader)
 		defer scsFile.Close()
 		globalPlonkScsInitialized = true
-		logStderr("plonk: Reading circuit (first call) took %s\n", time.Since(start))
-	} else {
-		logStderr("plonk: Using cached circuit\n")
+		fmt.Printf("Reading R1CS took %s\n", time.Since(start))
 	}
 	globalPlonkMutex.Unlock()
 
-	// Read the proving key (cached globally after first call).
+	// Read the proving key.
 	globalPlonkMutex.Lock()
 	if !globalPlonkPkInitialized {
 		start = time.Now()
@@ -73,13 +60,11 @@ func ProvePlonk(dataDir string, witnessPath string) Proof {
 		globalPlonkPk.UnsafeReadFrom(pkReader)
 		defer pkFile.Close()
 		globalPlonkPkInitialized = true
-		logStderr("plonk: Reading proving key (first call) took %s\n", time.Since(start))
-	} else {
-		logStderr("plonk: Using cached proving key\n")
+		fmt.Printf("Reading proving key took %s\n", time.Since(start))
 	}
 	globalPlonkMutex.Unlock()
 
-	// Read the verifier key (cached globally after first call).
+	// Read the verifier key.
 	globalPlonkMutex.Lock()
 	if !globalPlonkVkInitialized {
 		start = time.Now()
@@ -90,19 +75,17 @@ func ProvePlonk(dataDir string, witnessPath string) Proof {
 		globalPlonkVk.ReadFrom(vkFile)
 		defer vkFile.Close()
 		globalPlonkVkInitialized = true
-		logStderr("plonk: Reading verifying key (first call) took %s\n", time.Since(start))
-	} else {
-		logStderr("plonk: Using cached verifying key\n")
+		fmt.Printf("Reading verifying key took %s\n", time.Since(start))
 	}
 	globalPlonkMutex.Unlock()
 
 	start = time.Now()
-	// Read the witness file.
+	// Read the file.
 	data, err := os.ReadFile(witnessPath)
 	if err != nil {
 		panic(err)
 	}
-	logStderr("plonk: Reading witness file took %s\n", time.Since(start))
+	fmt.Printf("Reading witness file took %s\n", time.Since(start))
 
 	start = time.Now()
 	// Deserialize the JSON data into a slice of Instruction structs
@@ -111,7 +94,7 @@ func ProvePlonk(dataDir string, witnessPath string) Proof {
 	if err != nil {
 		panic(err)
 	}
-	logStderr("plonk: Deserializing JSON data took %s\n", time.Since(start))
+	fmt.Printf("Deserializing JSON data took %s\n", time.Since(start))
 
 	start = time.Now()
 	// Generate the witness.
@@ -124,31 +107,24 @@ func ProvePlonk(dataDir string, witnessPath string) Proof {
 	if err != nil {
 		panic(err)
 	}
-	logStderr("plonk: Generating witness took %s\n", time.Since(start))
+	fmt.Printf("Generating witness took %s\n", time.Since(start))
 
-	logStderr("plonk: Starting plonk.Prove() (constraint solver + FFT + KZG commitments)...\n")
 	start = time.Now()
 	// Generate the proof.
 	proof, err := plonk.Prove(globalPlonkScs, globalPlonkPk, witness)
 	if err != nil {
-		logStderr("plonk: Error: %v\n", err)
+		fmt.Printf("Error: %v\n", err)
 		panic(err)
 	}
-	logStderr("plonk: Generating proof took %s\n", time.Since(start))
+	fmt.Printf("Generating proof took %s\n", time.Since(start))
 
-	logStderr("plonk: Starting plonk.Verify()...\n")
 	start = time.Now()
 	// Verify proof.
 	err = plonk.Verify(proof, globalPlonkVk, publicWitness)
 	if err != nil {
 		panic(err)
 	}
-	logStderr("plonk: Verifying proof took %s\n", time.Since(start))
+	fmt.Printf("Verifying proof took %s\n", time.Since(start))
 
-	logStderr("plonk: Building SP1 proof response...\n")
-	start = time.Now()
-	result := NewSP1PlonkBn254Proof(&proof, witnessInput)
-	logStderr("plonk: Building response took %s\n", time.Since(start))
-
-	return result
+	return NewSP1PlonkBn254Proof(&proof, witnessInput)
 }
