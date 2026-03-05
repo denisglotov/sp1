@@ -14,6 +14,8 @@ import (
 	"github.com/consensys/gnark/frontend"
 )
 
+// Global cache for the constraint system, proving key, and verifying key,
+// similar to prove_groth16.go.
 var globalPlonkMutex sync.RWMutex
 var globalPlonkScs constraint.ConstraintSystem = plonk.NewCS(ecc.BN254)
 var globalPlonkScsInitialized = false
@@ -32,7 +34,9 @@ func ProvePlonk(dataDir string, witnessPath string) Proof {
 	os.Setenv("CONSTRAINTS_JSON", dataDir+"/"+constraintsJsonFile)
 	fmt.Printf("Setting environment variables took %s\n", time.Since(start))
 
-	// Read the R1CS.
+	// Read the R1CS (cached globally after first call). `dataDir` is the path
+	// to the circuit artifacts directory and does not change during the lifetime
+	// of this server, so it is safe to cache these.
 	globalPlonkMutex.Lock()
 	if !globalPlonkScsInitialized {
 		start = time.Now()
